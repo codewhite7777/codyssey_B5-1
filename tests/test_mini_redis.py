@@ -276,5 +276,31 @@ class TestErrors(unittest.TestCase):
         self.assertIsNone(handle_line(self.db, "   "))
 
 
+class TestConstraints(unittest.TestCase):
+    def test_no_dict_set_collections(self):
+        """mini_redis 코드에 dict, set, collections가 없는지 코드 구조(AST)로 검사한다."""
+        import ast
+        import os
+
+        folder = os.path.join(os.path.dirname(__file__), "..", "mini_redis")
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".py"):
+                continue
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+            for node in ast.walk(tree):
+                where = "{}:{}".format(name, getattr(node, "lineno", "?"))
+                # {} {1, 2} {k: v} 같은 dict/set 문법
+                self.assertNotIsInstance(node, (ast.Dict, ast.Set, ast.DictComp, ast.SetComp), where)
+                # dict(...), set(...), frozenset(...) 호출
+                if isinstance(node, ast.Name):
+                    self.assertNotIn(node.id, ("dict", "set", "frozenset"), where)
+                # import collections / from collections import ...
+                if isinstance(node, ast.Import):
+                    self.assertNotIn("collections", [a.name.split(".")[0] for a in node.names], where)
+                if isinstance(node, ast.ImportFrom):
+                    self.assertNotEqual((node.module or "").split(".")[0], "collections", where)
+
+
 if __name__ == "__main__":
     unittest.main()
