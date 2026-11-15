@@ -94,7 +94,7 @@ Redis는 데이터를 디스크가 아니라 **메모리**에 둡니다. 그런�
 | 명령 이름은 대소문자 구분 안 함 (`set` = `SET`) | 실제 Redis와 같게 |
 | EXISTS, TTL, EXPIRE는 LRU 순서를 바꾸지 않음 | 과제가 "SET, GET 성공 시"에만 갱신하라고 함 |
 | TTL은 남은 초의 **소수점을 버림** | 과제 예시처럼 `EXPIRE 3` 직후 `TTL`이 `2` |
-| 만료 키는 **명령어가 올 때마다** 힙 맨 위부터 정리 | DBSIZE, KEYS, INFO도 만료된 키를 세지 않도록 |
+| 만료 키는 **키를 다루는 명령어와 DBSIZE, KEYS, INFO 앞에서** 힙 맨 위부터 정리 (SET은 OOM 검사 다음, CONFIG SET은 정리 안 함) | DBSIZE, KEYS, INFO도 만료된 키를 세지 않도록 |
 | 힙에서는 바로 지우지 않고 꺼낼 때 버림 (lazy deletion) | 힙 가운데 항목 찾기는 O(n). 과제에서 허용한 방식 ([설명](docs/concepts.md#5-ttl-만료-관리)) |
 | maxmemory를 줄여도 그 자리에서 지우지 않음 | 과제 규칙이 "SET 이후" 초과 시 제거. 다음 SET 때 맞춰짐 |
 | 값에 공백이 있으면 큰따옴표: `SET msg "hello world"` | 과제 최소 요구(공백 없는 값 / 따옴표 값) 둘 다 지원. 따옴표가 안 닫히면 에러 |
@@ -370,6 +370,8 @@ mini-redis> SET a "no end
 | `ERR value is not an integer or out of range` | maxmemory, EXPIRE 초가 정수가 아님 (maxmemory는 음수도) |
 | `OOM command not allowed when used_memory > 'maxmemory'` | 키+값 하나가 maxmemory보다 큼 |
 | `ERR unbalanced quotes in request` (추가) | 큰따옴표가 안 닫힘 |
+| `ERR unsupported CONFIG parameter: ...` (추가) | `CONFIG SET timeout 5`처럼 maxmemory가 아닌 설정 (CONFIG SET maxmemory만 구현) |
+| `CONFIG GET maxmemory`, `INFO stats` | 인자 개수 에러로 처리됨 (CONFIG는 SET maxmemory, INFO는 memory만 구현) |
 
 ![에러 처리 실행 화면](docs/images/demo_errors.svg)
 

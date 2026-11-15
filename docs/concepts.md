@@ -57,7 +57,9 @@ index = hash_string(key) % self._capacity     # ④ 칸 개수로 나눈 나머�
 | ③ `& 0xFFFFFFFF` | 32비트(0 ~ 약 43억) 안으로 자름 | 긴 키에서 숫자가 끝없이 커지지 않게 |
 | ④ `% capacity` | 나머지 = 0 ~ capacity−1 | 배열 칸 번호로 바로 사용 |
 
-31을 쓴 이유: 홀수인 소수라서 바이트가 고르게 섞이고, 자바의 `String.hashCode`도 같은 31을 씁니다.
+31을 쓴 이유: 핵심은 **홀수**라는 점입니다. 32비트로 자르는 계산에서 홀수를 곱하면 서로 다른 값이 같은 값으로 뭉개지지 않습니다 (짝수를 곱하면 맨 아래 비트가 계속 0으로 밀려 사라짐). 또 `h × 31 = (h << 5) − h`라서 계산이 빠르고, 자바의 `String.hashCode`도 같은 31을 씁니다.
+
+> **한계도 있습니다.** 칸 번호는 해시값의 **아래쪽 몇 비트**만 씁니다 (칸 8개 = 아래 3비트). 31 = 32 − 1이라 아래쪽 비트에서는 바이트를 번갈아 더하고 빼는 것과 비슷해져서, `"abc"`와 `"cba"`는 해시값은 다르지만 칸이 8~128개일 때 같은 칸에 들어갑니다. 체이닝 덕분에 결과는 맞지만 그만큼 체인이 길어집니다. 자바 `HashMap`은 이런 이유로 해시값의 위쪽 비트를 아래로 한 번 더 섞습니다 (`h ^ (h >>> 16)`). 이 과제에서는 필수 범위라 그대로 두었습니다.
 
 ### 체이닝: 같은 칸에 들어오면 이어 붙인다
 
@@ -143,6 +145,7 @@ class Node:
 def _unlink(self, node):            # 떼기: 내 앞과 내 뒤를 서로 직접 연결
     node.prev.next = node.next
     node.next.prev = node.prev
+    ...                              # (줄임) 떼어 낸 노드의 연결 지우기, 개수 −1
 
 def _link_after(self, prev_node, node):   # 붙이기: prev_node와 그 다음 사이에 끼우기
     next_node = prev_node.next
@@ -150,6 +153,7 @@ def _link_after(self, prev_node, node):   # 붙이기: prev_node와 그 다음 �
     node.next = next_node
     prev_node.next = node
     next_node.prev = node
+    ...                              # (줄임) 개수 +1
 ```
 
 ---
@@ -189,6 +193,8 @@ def _link_after(self, prev_node, node):   # 붙이기: prev_node와 그 다음 �
 def _evict_until_fit(self):
     while self.maxmemory > 0 and self.used_memory > self.maxmemory:
         oldest_key = self._lru.peek_back()      # 리스트 맨 뒤 = 가장 오래 안 쓴 키
+        if oldest_key is None:                  # 지울 키가 없으면 멈춤 (안전장치)
+            break
         self._delete(oldest_key)                # 해시맵, 리스트, used_memory에서 함께 제거
         self.evicted_keys += 1
 ```
@@ -246,7 +252,7 @@ TTL 관리에서 필요한 질문은 딱 하나입니다. **"지금 만료된 �
 
 ### 힙 정리 + lazy deletion
 
-[`MiniRedis._remove_expired_keys`](../mini_redis/store.py#L72-L85)는 **모든 명령어의 맨 처음**에 실행됩니다.
+[`MiniRedis._remove_expired_keys`](../mini_redis/store.py#L72-L85)는 **키를 다루는 명령어(GET, SET, DEL, EXISTS, EXPIRE, TTL)와 DBSIZE, KEYS, INFO가 일을 시작하기 전에** 실행됩니다. SET만은 OOM 검사를 먼저 하고 그다음에 정리하고, CONFIG SET은 정리하지 않습니다.
 
 ![TTL lazy deletion](images/ttl_lazy_deletion.svg)
 
@@ -270,11 +276,11 @@ TTL 관리에서 필요한 질문은 딱 하나입니다. **"지금 만료된 �
 |---|---|---|
 | ① | `_remove_expired_keys()` | 힙 맨 위부터 시간이 지난 키들을 삭제 |
 | ② | `self._data.get(key)` | 해시맵에서 Record 찾기. 없으면 `(nil)` |
-| ③ | `_is_expired(record)` | 혹시 남아 있어도 만료 시각이 지났으면 삭제 후 `(nil)` (과제의 "키 기반 명령어는 먼저 만료 확인") |
+| ③ | `_is_expired(record)` | 혹시 남아 있어도 만료 시각이 지났으면 삭제 후 `(nil)` (과제의 "키 기반 명령어는 먼저 만료 확인"). ①과 ③은 현재 시각을 따로 읽으므로, 그 아주 짧은 사이에 만료된 키를 막는 안전장치 |
 | ④ | `move_to_front(record.lru_node)` | **값을 돌려줄 때만** LRU 갱신 |
 | ⑤ | `return record.value` | `"value"` 출력 |
 
-①과 ③은 `_get_alive_record` 한 함수에 들어 있고, GET, DEL, EXISTS, EXPIRE, TTL, SET이 모두 이 함수를 먼저 부릅니다.
+①과 ③은 `_get_alive_record` 한 함수에 들어 있고, GET, DEL, EXISTS, EXPIRE, TTL이 이 함수를 먼저 부릅니다. SET은 OOM 검사 다음에 부릅니다.
 
 ---
 
